@@ -1,271 +1,216 @@
-# 微信
+# openbot-weixin
 
 [English](./README.md)
 
-OpenClaw 的微信渠道插件，支持通过扫码完成登录授权。
+---
 
-## 前提条件
+## 致谢
 
-已安装 [OpenClaw](https://docs.openclaw.ai/install)（需要 `openclaw` CLI 可用）。
+本项目 fork 自 [Tencent 的 openclaw-weixin](https://github.com/tencent/openclaw-weixin) 渠道插件。感谢 Tencent 对微信生态的开源贡献。
 
-## 一键安装
+## 概述
 
-```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-```
+`openbot-weixin` 是一个**纯净的微信 API 客户端库**，可以通过简单清晰的 API 与微信/Weixin 进行交互。它设计为框架无关——无需 OpenClaw 或其他框架依赖。
 
-## 手动安装
+### 使用这个库可以实现：
 
-如果一键安装不适用，可以按以下步骤手动操作：
+- **扫码登录** — 通过扫描二维码完成微信认证
+- **长轮询消息** — 通过 getUpdates 轮询接收入站消息
+- **发送消息** — 发送文本、图片、视频、文件和语音消息
+- **CDN 媒体上传/下载** — 处理带 AES-128-ECB 加密的媒体文件
+- **输入状态指示** — 向用户发送/取消输入状态
 
-### 1. 安装插件
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-```
-
-### 2. 启用插件
+## 安装
 
 ```bash
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+npm install openbot-weixin
 ```
 
-### 3. 扫码登录
+## 快速开始
 
-```bash
-openclaw channels login --channel openclaw-weixin
-```
+### 1. 扫码登录
 
-终端会显示一个二维码，用手机扫码并在手机上确认授权。确认后，登录凭证会自动保存到本地，无需额外操作。
+```typescript
+import { loginWithQr, waitForLogin, saveWeixinAccount } from "openbot-weixin";
 
-### 4. 重启 gateway
+const account = await loginWithQr({
+  baseUrl: "https://ilinkai.weixin.qq.com",
+  onQRCode: (dataUrl) => {
+    // 向用户展示二维码
+    console.log("请扫描此二维码:", dataUrl);
+  },
+});
 
-```bash
-openclaw gateway restart
-```
+const result = await waitForLogin(account);
 
-## 添加更多微信账号
-
-```bash
-openclaw channels login --channel openclaw-weixin
-```
-
-每次扫码登录都会创建一个新的账号条目，支持多个微信号同时在线。
-
-## 多账号上下文隔离
-
-默认情况下，所有渠道的 AI 会话共享同一个上下文。如果希望每个微信账号的对话上下文相互隔离：
-
-```bash
-openclaw config set agents.mode per-channel-per-peer
-```
-
-这样每个「微信账号 + 发消息用户」组合都会拥有独立的 AI 记忆，账号之间不会串台。
-
-## 后端 API 协议
-
-本插件通过 HTTP JSON API 与后端网关通信。二次开发者若需对接自有后端，需实现以下接口。
-
-所有接口均为 `POST`，请求和响应均为 JSON。通用请求头：
-
-| Header | 说明 |
-|--------|------|
-| `Content-Type` | `application/json` |
-| `AuthorizationType` | 固定值 `ilink_bot_token` |
-| `Authorization` | `Bearer <token>`（登录后获取） |
-| `X-WECHAT-UIN` | 随机 uint32 的 base64 编码 |
-
-### 接口列表
-
-| 接口 | 路径 | 说明 |
-|------|------|------|
-| getUpdates | `getupdates` | 长轮询获取新消息 |
-| sendMessage | `sendmessage` | 发送消息（文本/图片/视频/文件） |
-| getUploadUrl | `getuploadurl` | 获取 CDN 上传预签名 URL |
-| getConfig | `getconfig` | 获取账号配置（typing ticket 等） |
-| sendTyping | `sendtyping` | 发送/取消输入状态指示 |
-
-### getUpdates
-
-长轮询接口。服务端在有新消息或超时后返回。
-
-**请求体：**
-
-```json
-{
-  "get_updates_buf": ""
+if (result.status === "confirmed") {
+  // 保存凭证以供后续使用
+  saveWeixinAccount(result.accountId, {
+    token: result.token,
+    userId: result.userId,
+  });
+  console.log("登录成功！");
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `get_updates_buf` | `string` | 上次响应返回的同步游标，首次请求传空字符串 |
+### 2. 创建消息轮询器
 
-**响应体：**
+```typescript
+import { createPoller, type TextMessage, type MediaMessage } from "openbot-weixin";
 
-```json
-{
-  "ret": 0,
-  "msgs": [...],
-  "get_updates_buf": "<新游标>",
-  "longpolling_timeout_ms": 35000
-}
-```
+const account = {
+  accountId: "my-bot",
+  baseUrl: "https://ilinkai.weixin.qq.com",
+  cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
+  token: "your-token-here",
+  enabled: true,
+  configured: true,
+};
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `ret` | `number` | 返回码，`0` = 成功 |
-| `errcode` | `number?` | 错误码（如 `-14` = 会话超时） |
-| `errmsg` | `string?` | 错误描述 |
-| `msgs` | `WeixinMessage[]` | 消息列表（结构见下方） |
-| `get_updates_buf` | `string` | 新的同步游标，下次请求时回传 |
-| `longpolling_timeout_ms` | `number?` | 服务端建议的下次长轮询超时（ms） |
+const poller = createPoller({
+  account,
 
-### sendMessage
+  callbacks: {
+    onTextMessage: async (msg: TextMessage) => {
+      console.log(`收到来自 ${msg.fromUserId} 的消息: ${msg.content}`);
 
-发送一条消息给用户。
-
-**请求体：**
-
-```json
-{
-  "msg": {
-    "to_user_id": "<目标用户 ID>",
-    "context_token": "<会话上下文令牌>",
-    "item_list": [
-      {
-        "type": 1,
-        "text_item": { "text": "你好" }
+      // 回复相同内容（回显示例）
+      // 生产环境中，这里应该接入你的 AI 后端
+      if (callbacks.sendText) {
+        await callbacks.sendText({
+          to: msg.fromUserId,
+          text: `回显: ${msg.content}`,
+          contextToken: msg.contextToken,
+        });
       }
-    ]
+    },
+
+    onMediaMessage: async (msg: MediaMessage) => {
+      console.log(`收到来自 ${msg.fromUserId} 的媒体消息:`);
+      console.log(`  类型: ${msg.mediaType}`);
+      console.log(`  路径: ${msg.mediaPath}`);
+    },
+
+    onError: (err, context) => {
+      console.error(`${context} 中发生错误:`, err);
+    },
+
+    // 实现 sendText 来回复消息
+    sendText: async ({ to, text, contextToken }) => {
+      await sendMessageWeixin({
+        to,
+        text,
+        opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
+      });
+    },
+  },
+
+  onStatusChange: (status) => {
+    console.log(`连接状态: ${status.connected ? "已连接" : "已断开"}`);
+  },
+});
+
+// 需要停止时: poller.stop()
+```
+
+### 3. 直接发送消息
+
+```typescript
+import { sendMessageWeixin, sendImageMessageWeixin } from "openbot-weixin";
+
+// 发送文本消息
+await sendMessageWeixin({
+  to: "user-id",
+  text: "你好，来自 openbot-weixin！",
+  opts: {
+    baseUrl: "https://ilinkai.weixin.qq.com",
+    token: "your-token",
+    contextToken: "context-token-from-inbound-message",
+  },
+});
+
+// 发送图片（需先上传到 CDN）
+await sendImageMessageWeixin({
+  to: "user-id",
+  text: "这是一张图片",
+  uploaded: {
+    filekey: "上传后得到的 file-key",
+    aeskey: Buffer.from("your-32-byte-key"),
+    fileSize: 12345,
+    fileSizeCiphertext: 12352,
+    downloadEncryptedQueryParam: "encrypted-param",
+  },
+  opts: {
+    baseUrl: "https://ilinkai.weixin.qq.com",
+    token: "your-token",
+    contextToken: "context-token",
+  },
+});
+```
+
+### 4. 手动处理入站消息
+
+如果需要更多控制权：
+
+```typescript
+import { getUpdates } from "openbot-weixin";
+
+async function messageLoop() {
+  let syncBuf = "";
+
+  while (true) {
+    const resp = await getUpdates({
+      baseUrl: account.baseUrl,
+      token: account.token,
+      get_updates_buf: syncBuf,
+      timeoutMs: 35000,
+    });
+
+    if (resp.get_updates_buf) {
+      syncBuf = resp.get_updates_buf;
+    }
+
+    for (const msg of resp.msgs ?? []) {
+      // 处理每条消息
+      const text = msg.item_list?.[0]?.text_item?.text ?? "";
+      console.log(`收到来自 ${msg.from_user_id} 的消息: ${text}`);
+    }
   }
 }
 ```
 
-### getUploadUrl
+## API 参考
 
-获取 CDN 上传预签名参数。上传文件前需先调用此接口获取 `upload_param` 和 `thumb_upload_param`。
+### 核心导出
 
-**请求体：**
+| 导出 | 说明 |
+|------|------|
+| `loginWithQr` / `waitForLogin` | 扫码登录流程 |
+| `createPoller` | 启动带回调的长轮询消息循环 |
+| `sendMessageWeixin` | 发送文本消息 |
+| `sendImageMessageWeixin` | 发送图片 |
+| `sendVideoMessageWeixin` | 发送视频 |
+| `sendFileMessageWeixin` | 发送文件 |
+| `getUpdates` | 长轮询获取新消息 |
+| `resolveWeixinAccount` | 从配置文件解析账号配置 |
+| `loadWeixinAccount` / `saveWeixinAccount` | 管理存储的凭证 |
+| `markdownToPlainText` | 将 markdown 转换为纯文本 |
+| `normalizeAccountId` | 标准化账户 ID（文件系统安全） |
 
-```json
-{
-  "filekey": "<文件标识>",
-  "media_type": 1,
-  "to_user_id": "<目标用户 ID>",
-  "rawsize": 12345,
-  "rawfilemd5": "<明文 MD5>",
-  "filesize": 12352,
-  "thumb_rawsize": 1024,
-  "thumb_rawfilemd5": "<缩略图明文 MD5>",
-  "thumb_filesize": 1040
-}
-```
+### 类型
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE |
-| `rawsize` | `number` | 原文件明文大小 |
-| `rawfilemd5` | `string` | 原文件明文 MD5 |
-| `filesize` | `number` | AES-128-ECB 加密后的密文大小 |
-| `thumb_rawsize` | `number?` | 缩略图明文大小（IMAGE/VIDEO 时必填） |
-| `thumb_rawfilemd5` | `string?` | 缩略图明文 MD5（IMAGE/VIDEO 时必填） |
-| `thumb_filesize` | `number?` | 缩略图密文大小（IMAGE/VIDEO 时必填） |
+| 类型 | 说明 |
+|------|------|
+| `TextMessage` | 入站文本消息 |
+| `MediaMessage` | 入站媒体消息 |
+| `ResolvedWeixinAccount` | 解析后的账号（含凭证） |
+| `WeixinMessageCallbacks` | 消息处理回调接口 |
+| `InboundMessage` | 统一的入站消息 |
 
-**响应体：**
+## 许可证
 
-```json
-{
-  "upload_param": "<原图上传加密参数>",
-  "thumb_upload_param": "<缩略图上传加密参数>"
-}
-```
+本项目采用 MIT 许可证。详见 [LICENSE](./LICENSE)。
 
-### getConfig
+## 后端 API 协议
 
-获取账号配置，包括 typing ticket。
-
-**请求体：**
-
-```json
-{
-  "ilink_user_id": "<用户 ID>",
-  "context_token": "<可选，会话上下文令牌>"
-}
-```
-
-**响应体：**
-
-```json
-{
-  "ret": 0,
-  "typing_ticket": "<base64 编码的 typing ticket>"
-}
-```
-
-### sendTyping
-
-发送或取消输入状态指示。
-
-**请求体：**
-
-```json
-{
-  "ilink_user_id": "<用户 ID>",
-  "typing_ticket": "<从 getConfig 获取>",
-  "status": 1
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `status` | `number` | `1` = 正在输入，`2` = 取消输入 |
-
-### 消息结构
-
-#### WeixinMessage
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `seq` | `number?` | 消息序列号 |
-| `message_id` | `number?` | 消息唯一 ID |
-| `from_user_id` | `string?` | 发送者 ID |
-| `to_user_id` | `string?` | 接收者 ID |
-| `create_time_ms` | `number?` | 创建时间戳（ms） |
-| `session_id` | `string?` | 会话 ID |
-| `message_type` | `number?` | `1` = USER, `2` = BOT |
-| `message_state` | `number?` | `0` = NEW, `1` = GENERATING, `2` = FINISH |
-| `item_list` | `MessageItem[]?` | 消息内容列表 |
-| `context_token` | `string?` | 会话上下文令牌，回复时需回传 |
-
-#### MessageItem
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `type` | `number` | `1` TEXT, `2` IMAGE, `3` VOICE, `4` FILE, `5` VIDEO |
-| `text_item` | `{ text: string }?` | 文本内容 |
-| `image_item` | `ImageItem?` | 图片（含 CDN 引用和 AES 密钥） |
-| `voice_item` | `VoiceItem?` | 语音（SILK 编码） |
-| `file_item` | `FileItem?` | 文件附件 |
-| `video_item` | `VideoItem?` | 视频 |
-| `ref_msg` | `RefMessage?` | 引用消息 |
-
-#### CDN 媒体引用 (CDNMedia)
-
-所有媒体类型（图片/语音/文件/视频）通过 CDN 传输，使用 AES-128-ECB 加密：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `encrypt_query_param` | `string?` | CDN 下载/上传的加密参数 |
-| `aes_key` | `string?` | base64 编码的 AES-128 密钥 |
-
-### CDN 上传流程
-
-1. 计算文件明文大小、MD5，以及 AES-128-ECB 加密后的密文大小
-2. 如需缩略图（图片/视频），同样计算缩略图的明文和密文参数
-3. 调用 `getUploadUrl` 获取 `upload_param`（和 `thumb_upload_param`）
-4. 使用 AES-128-ECB 加密文件内容，PUT 上传到 CDN URL
-5. 缩略图同理加密并上传
-6. 使用返回的 `encrypt_query_param` 构造 `CDNMedia` 引用，放入 `MessageItem` 发送
-
-> 完整的类型定义见 [`src/api/types.ts`](src/api/types.ts)，API 调用实现见 [`src/api/api.ts`](src/api/api.ts)。
+对于需要对接自有后端的开发者，本库通过 HTTP JSON API 与后端网关通信。协议文档见 [docs](./docs) 目录。
