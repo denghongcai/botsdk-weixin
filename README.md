@@ -1,271 +1,216 @@
-# WeChat
+# openbot-weixin
 
 [简体中文](./README.zh_CN.md)
 
-OpenClaw's WeChat channel plugin, supporting login authorization via QR code scanning.
+---
 
-## Prerequisites
+## Acknowledgments
 
-[OpenClaw](https://docs.openclaw.ai/install) must be installed (the `openclaw` CLI needs to be available).
+This project is forked from [Tencent's openclaw-weixin](https://github.com/tencent/openclaw-weixin) channel plugin. We thank Tencent for their open-source contribution to the WeChat/Weixin ecosystem.
 
-## Quick Install
+## Overview
 
-```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-```
+`openbot-weixin` is a **pure WeChat API client library** that allows you to interact with WeChat/Weixin through a simple and clean API. It is designed to be framework-agnostic — no OpenClaw or other framework dependencies required.
 
-## Manual Installation
+### What you can do with this library:
 
-If the quick install doesn't work, follow these steps manually:
+- **QR Code Login** — Authenticate with WeChat using QR code scanning
+- **Long-poll Messages** — Receive inbound messages via getUpdates polling
+- **Send Messages** — Send text, images, videos, files, and voice messages
+- **CDN Media Upload/Download** — Handle media with AES-128-ECB encryption
+- **Typing Indicators** — Send/cancel typing status to users
 
-### 1. Install the plugin
-
-```bash
-openclaw plugins install "@tencent-weixin/openclaw-weixin"
-```
-
-### 2. Enable the plugin
+## Installation
 
 ```bash
-openclaw config set plugins.entries.openclaw-weixin.enabled true
+npm install openbot-weixin
 ```
 
-### 3. QR code login
+## Quick Start
 
-```bash
-openclaw channels login --channel openclaw-weixin
-```
+### 1. QR Code Login
 
-A QR code will appear in the terminal. Scan it with your phone and confirm the authorization. Once confirmed, the login credentials will be saved locally automatically — no further action is needed.
+```typescript
+import { loginWithQr, waitForLogin, saveWeixinAccount } from "openbot-weixin";
 
-### 4. Restart the gateway
+const account = await loginWithQr({
+  baseUrl: "https://ilinkai.weixin.qq.com",
+  onQRCode: (dataUrl) => {
+    // Display the QR code to the user
+    console.log("Scan this QR code:", dataUrl);
+  },
+});
 
-```bash
-openclaw gateway restart
-```
+const result = await waitForLogin(account);
 
-## Adding More WeChat Accounts
-
-```bash
-openclaw channels login --channel openclaw-weixin
-```
-
-Each QR code login creates a new account entry, supporting multiple WeChat accounts online simultaneously.
-
-## Multi-Account Context Isolation
-
-By default, all channels share the same AI conversation context. To isolate conversation context for each WeChat account:
-
-```bash
-openclaw config set agents.mode per-channel-per-peer
-```
-
-This gives each "WeChat account + message sender" combination its own independent AI memory, preventing context cross-talk between accounts.
-
-## Backend API Protocol
-
-This plugin communicates with the backend gateway via HTTP JSON API. Developers integrating with their own backend need to implement the following interfaces.
-
-All endpoints use `POST` with JSON request and response bodies. Common request headers:
-
-| Header | Description |
-|--------|-------------|
-| `Content-Type` | `application/json` |
-| `AuthorizationType` | Fixed value `ilink_bot_token` |
-| `Authorization` | `Bearer <token>` (obtained after login) |
-| `X-WECHAT-UIN` | Base64-encoded random uint32 |
-
-### Endpoint List
-
-| Endpoint | Path | Description |
-|----------|------|-------------|
-| getUpdates | `getupdates` | Long-poll for new messages |
-| sendMessage | `sendmessage` | Send a message (text/image/video/file) |
-| getUploadUrl | `getuploadurl` | Get CDN upload pre-signed URL |
-| getConfig | `getconfig` | Get account config (typing ticket, etc.) |
-| sendTyping | `sendtyping` | Send/cancel typing status indicator |
-
-### getUpdates
-
-Long-polling endpoint. The server responds when new messages arrive or on timeout.
-
-**Request body:**
-
-```json
-{
-  "get_updates_buf": ""
+if (result.status === "confirmed") {
+  // Save credentials for later use
+  saveWeixinAccount(result.accountId, {
+    token: result.token,
+    userId: result.userId,
+  });
+  console.log("Login successful!");
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `get_updates_buf` | `string` | Sync cursor from the previous response; empty string for the first request |
+### 2. Create a Message Poller
 
-**Response body:**
+```typescript
+import { createPoller, type TextMessage, type MediaMessage } from "openbot-weixin";
 
-```json
-{
-  "ret": 0,
-  "msgs": [...],
-  "get_updates_buf": "<new cursor>",
-  "longpolling_timeout_ms": 35000
-}
-```
+const account = {
+  accountId: "my-bot",
+  baseUrl: "https://ilinkai.weixin.qq.com",
+  cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
+  token: "your-token-here",
+  enabled: true,
+  configured: true,
+};
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `ret` | `number` | Return code, `0` = success |
-| `errcode` | `number?` | Error code (e.g., `-14` = session timeout) |
-| `errmsg` | `string?` | Error description |
-| `msgs` | `WeixinMessage[]` | Message list (structure below) |
-| `get_updates_buf` | `string` | New sync cursor to pass in the next request |
-| `longpolling_timeout_ms` | `number?` | Server-suggested long-poll timeout for the next request (ms) |
+const poller = createPoller({
+  account,
 
-### sendMessage
+  callbacks: {
+    onTextMessage: async (msg: TextMessage) => {
+      console.log(`Received from ${msg.fromUserId}: ${msg.content}`);
 
-Send a message to a user.
-
-**Request body:**
-
-```json
-{
-  "msg": {
-    "to_user_id": "<target user ID>",
-    "context_token": "<conversation context token>",
-    "item_list": [
-      {
-        "type": 1,
-        "text_item": { "text": "Hello" }
+      // Reply with the same text (echo example)
+      // In production, you would integrate with your AI backend here
+      if (callbacks.sendText) {
+        await callbacks.sendText({
+          to: msg.fromUserId,
+          text: `Echo: ${msg.content}`,
+          contextToken: msg.contextToken,
+        });
       }
-    ]
+    },
+
+    onMediaMessage: async (msg: MediaMessage) => {
+      console.log(`Received media from ${msg.fromUserId}:`);
+      console.log(`  Type: ${msg.mediaType}`);
+      console.log(`  Path: ${msg.mediaPath}`);
+    },
+
+    onError: (err, context) => {
+      console.error(`Error in ${context}:`, err);
+    },
+
+    // Implement sendText to reply to messages
+    sendText: async ({ to, text, contextToken }) => {
+      await sendMessageWeixin({
+        to,
+        text,
+        opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
+      });
+    },
+  },
+
+  onStatusChange: (status) => {
+    console.log(`Connection status: ${status.connected ? "connected" : "disconnected"}`);
+  },
+});
+
+// Later: poller.stop() to stop polling
+```
+
+### 3. Send Messages Directly
+
+```typescript
+import { sendMessageWeixin, sendImageMessageWeixin } from "openbot-weixin";
+
+// Send a text message
+await sendMessageWeixin({
+  to: "user-id",
+  text: "Hello from openbot-weixin!",
+  opts: {
+    baseUrl: "https://ilinkai.weixin.qq.com",
+    token: "your-token",
+    contextToken: "context-token-from-inbound-message",
+  },
+});
+
+// Send an image (after uploading to CDN)
+await sendImageMessageWeixin({
+  to: "user-id",
+  text: "Here's an image for you",
+  uploaded: {
+    filekey: "file-key-from-upload",
+    aeskey: Buffer.from("your-32-byte-key"),
+    fileSize: 12345,
+    fileSizeCiphertext: 12352,
+    downloadEncryptedQueryParam: "encrypted-param",
+  },
+  opts: {
+    baseUrl: "https://ilinkai.weixin.qq.com",
+    token: "your-token",
+    contextToken: "context-token",
+  },
+});
+```
+
+### 4. Process Inbound Messages Manually
+
+If you prefer more control over the message loop:
+
+```typescript
+import { getUpdates, markdownToPlainText } from "openbot-weixin";
+
+async function messageLoop() {
+  let syncBuf = "";
+
+  while (true) {
+    const resp = await getUpdates({
+      baseUrl: account.baseUrl,
+      token: account.token,
+      get_updates_buf: syncBuf,
+      timeoutMs: 35000,
+    });
+
+    if (resp.get_updates_buf) {
+      syncBuf = resp.get_updates_buf;
+    }
+
+    for (const msg of resp.msgs ?? []) {
+      // Process each message
+      const text = msg.item_list?.[0]?.text_item?.text ?? "";
+      console.log(`Message from ${msg.from_user_id}: ${text}`);
+    }
   }
 }
 ```
 
-### getUploadUrl
+## API Reference
 
-Get CDN upload pre-signed parameters. Call this endpoint before uploading a file to obtain `upload_param` and `thumb_upload_param`.
+### Core Exports
 
-**Request body:**
+| Export | Description |
+|--------|-------------|
+| `loginWithQr` / `waitForLogin` | QR code login flow |
+| `createPoller` | Start a long-poll message loop with callbacks |
+| `sendMessageWeixin` | Send a text message |
+| `sendImageMessageWeixin` | Send an image |
+| `sendVideoMessageWeixin` | Send a video |
+| `sendFileMessageWeixin` | Send a file |
+| `getUpdates` | Long-poll for new messages |
+| `resolveWeixinAccount` | Resolve account config from config file |
+| `loadWeixinAccount` / `saveWeixinAccount` | Manage stored credentials |
+| `markdownToPlainText` | Convert markdown to plain text |
+| `normalizeAccountId` | Normalize account IDs for filesystem safety |
 
-```json
-{
-  "filekey": "<file identifier>",
-  "media_type": 1,
-  "to_user_id": "<target user ID>",
-  "rawsize": 12345,
-  "rawfilemd5": "<plaintext MD5>",
-  "filesize": 12352,
-  "thumb_rawsize": 1024,
-  "thumb_rawfilemd5": "<thumbnail plaintext MD5>",
-  "thumb_filesize": 1040
-}
-```
+### Types
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `media_type` | `number` | `1` = IMAGE, `2` = VIDEO, `3` = FILE |
-| `rawsize` | `number` | Original file plaintext size |
-| `rawfilemd5` | `string` | Original file plaintext MD5 |
-| `filesize` | `number` | Ciphertext size after AES-128-ECB encryption |
-| `thumb_rawsize` | `number?` | Thumbnail plaintext size (required for IMAGE/VIDEO) |
-| `thumb_rawfilemd5` | `string?` | Thumbnail plaintext MD5 (required for IMAGE/VIDEO) |
-| `thumb_filesize` | `number?` | Thumbnail ciphertext size (required for IMAGE/VIDEO) |
+| Type | Description |
+|------|-------------|
+| `TextMessage` | Inbound text message |
+| `MediaMessage` | Inbound media message |
+| `ResolvedWeixinAccount` | Resolved account with credentials |
+| `WeixinMessageCallbacks` | Callbacks for message handling |
+| `InboundMessage` | Unified inbound message |
 
-**Response body:**
+## License
 
-```json
-{
-  "upload_param": "<original image upload encrypted parameters>",
-  "thumb_upload_param": "<thumbnail upload encrypted parameters>"
-}
-```
+This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
 
-### getConfig
+## Backend API Protocol
 
-Get account configuration, including the typing ticket.
-
-**Request body:**
-
-```json
-{
-  "ilink_user_id": "<user ID>",
-  "context_token": "<optional, conversation context token>"
-}
-```
-
-**Response body:**
-
-```json
-{
-  "ret": 0,
-  "typing_ticket": "<base64-encoded typing ticket>"
-}
-```
-
-### sendTyping
-
-Send or cancel the typing status indicator.
-
-**Request body:**
-
-```json
-{
-  "ilink_user_id": "<user ID>",
-  "typing_ticket": "<obtained from getConfig>",
-  "status": 1
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | `number` | `1` = typing, `2` = cancel typing |
-
-### Message Structure
-
-#### WeixinMessage
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `seq` | `number?` | Message sequence number |
-| `message_id` | `number?` | Unique message ID |
-| `from_user_id` | `string?` | Sender ID |
-| `to_user_id` | `string?` | Receiver ID |
-| `create_time_ms` | `number?` | Creation timestamp (ms) |
-| `session_id` | `string?` | Session ID |
-| `message_type` | `number?` | `1` = USER, `2` = BOT |
-| `message_state` | `number?` | `0` = NEW, `1` = GENERATING, `2` = FINISH |
-| `item_list` | `MessageItem[]?` | Message content list |
-| `context_token` | `string?` | Conversation context token, must be passed back when replying |
-
-#### MessageItem
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | `number` | `1` TEXT, `2` IMAGE, `3` VOICE, `4` FILE, `5` VIDEO |
-| `text_item` | `{ text: string }?` | Text content |
-| `image_item` | `ImageItem?` | Image (with CDN reference and AES key) |
-| `voice_item` | `VoiceItem?` | Voice (SILK encoded) |
-| `file_item` | `FileItem?` | File attachment |
-| `video_item` | `VideoItem?` | Video |
-| `ref_msg` | `RefMessage?` | Referenced message |
-
-#### CDN Media Reference (CDNMedia)
-
-All media types (image/voice/file/video) are transferred via CDN using AES-128-ECB encryption:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `encrypt_query_param` | `string?` | Encrypted parameters for CDN download/upload |
-| `aes_key` | `string?` | Base64-encoded AES-128 key |
-
-### CDN Upload Flow
-
-1. Calculate the file's plaintext size, MD5, and ciphertext size after AES-128-ECB encryption
-2. If a thumbnail is needed (image/video), calculate the thumbnail's plaintext and ciphertext parameters as well
-3. Call `getUploadUrl` to get `upload_param` (and `thumb_upload_param`)
-4. Encrypt the file content with AES-128-ECB and PUT upload to the CDN URL
-5. Encrypt and upload the thumbnail in the same way
-6. Use the returned `encrypt_query_param` to construct a `CDNMedia` reference, include it in the `MessageItem`, and send
-
-> For complete type definitions, see [`src/api/types.ts`](src/api/types.ts). For API call implementations, see [`src/api/api.ts`](src/api/api.ts).
+For developers integrating with their own backend, this library communicates with the backend gateway via HTTP JSON API. The protocol documentation is preserved from the original project in the [docs](./docs) directory.
