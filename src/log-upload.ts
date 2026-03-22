@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { WeixinConfig } from "./types/index.js";
 
 
 /** Minimal subset of commander's Command used by registerWeixinCli. */
@@ -45,13 +45,13 @@ function mainLogDir(): string {
   return path.join("/tmp", "openclaw");
 }
 
-function getConfiguredUploadUrl(config: OpenClawConfig): string | undefined {
+function getConfiguredUploadUrl(config: WeixinConfig): string | undefined {
   const section = config.channels?.["openclaw-weixin"] as { logUploadUrl?: string } | undefined;
   return section?.logUploadUrl;
 }
 
 /** Register the `openclaw openclaw-weixin logs-upload` CLI subcommand. */
-export function registerWeixinCli(params: { program: CliCommand; config: OpenClawConfig }): void {
+export function registerWeixinCli(params: { program: CliCommand; config: WeixinConfig }): void {
   const { program, config } = params;
 
   const root = program.command("openclaw-weixin").description("Weixin channel utilities");

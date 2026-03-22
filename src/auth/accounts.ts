@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { normalizeAccountId } from "openclaw/plugin-sdk";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
-
-import { getWeixinRuntime } from "../runtime.js";
+import { normalizeAccountId } from "../sdk/normalize-account-id.js";
+import type { WeixinConfig, ResolvedWeixinAccount } from "../types/index.js";
 import { resolveStateDir } from "../storage/state-dir.js";
 import { logger } from "../util/logger.js";
 
@@ -232,17 +230,6 @@ export async function triggerWeixinChannelReload(): Promise<void> {}
 // Account resolution (merge config + stored credentials)
 // ---------------------------------------------------------------------------
 
-export type ResolvedWeixinAccount = {
-  accountId: string;
-  baseUrl: string;
-  cdnBaseUrl: string;
-  token?: string;
-  enabled: boolean;
-  /** true when a token has been obtained via QR login. */
-  configured: boolean;
-  name?: string;
-};
-
 type WeixinAccountConfig = {
   name?: string;
   enabled?: boolean;
@@ -256,13 +243,13 @@ type WeixinSectionConfig = WeixinAccountConfig & {
 };
 
 /** List accountIds from the index file (written at QR login). */
-export function listWeixinAccountIds(_cfg: OpenClawConfig): string[] {
+export function listWeixinAccountIds(_cfg: WeixinConfig): string[] {
   return listIndexedWeixinAccountIds();
 }
 
 /** Resolve a weixin account by ID, merging config and stored credentials. */
 export function resolveWeixinAccount(
-  cfg: OpenClawConfig,
+  cfg: WeixinConfig,
   accountId?: string | null,
 ): ResolvedWeixinAccount {
   const raw = accountId?.trim();
