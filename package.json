@@ -10,7 +10,6 @@
     "src/",
     "!src/**/*.test.ts",
     "!src/**/node_modules/",
-    "index.ts",
     "README.md",
     "README.zh_CN.md"
   ],
@@ -28,12 +27,13 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^3.1.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   },
   "exports": {
-    ".": "./index.ts",
+    ".": "./src/index.ts",
     "./api": "./src/api/api.ts",
     "./auth": "./src/auth/accounts.ts",
     "./types": "./src/types/index.ts"

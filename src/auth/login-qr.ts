@@ -68,7 +68,7 @@ async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeR
     logger.error(`QR code fetch failed: ${response.status} ${response.statusText} body=${body}`);
     throw new Error(`Failed to fetch QR code: ${response.status} ${response.statusText}`);
   }
-  return await response.json();
+  return await response.json() as Promise<QRCodeResponse>;
 }
 
 async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusResponse> {

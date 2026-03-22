@@ -5,7 +5,7 @@
  * This replaces the OpenClaw-integrated monitor.ts
  */
 import { getUpdates } from "../api/api.js";
-import { SESSION_EXPAUSED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
+import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import type { ResolvedWeixinAccount, InboundMessage } from "../types/index.js";
 import type { WeixinMessageCallbacks } from "../types/callbacks.js";
 import { processInboundMessage } from "../messaging/processor.js";
@@ -90,7 +90,7 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
         });
 
         // Handle session expiration
-        if (resp.errcode === SESSION_EXPAUSED_ERRCODE || resp.ret === SESSION_EXPAUSED_ERRCODE) {
+        if (resp.errcode === SESSION_EXPIRED_ERRCODE || resp.ret === SESSION_EXPIRED_ERRCODE) {
           pauseSession(account.accountId);
           const pauseMs = getRemainingPauseMs(account.accountId);
           errLog(`Session expired, pausing for ${Math.ceil(pauseMs / 60_000)} min`);
@@ -134,6 +134,10 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
 
           try {
             await processInboundMessage(msg, account, callbacks, {
+              accountId: account.accountId,
+              baseUrl: account.baseUrl,
+              cdnBaseUrl: account.cdnBaseUrl,
+              token: account.token,
               log: accountLog.info.bind(accountLog),
               errLog: accountLog.error.bind(accountLog),
             });

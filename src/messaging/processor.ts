@@ -109,15 +109,15 @@ export async function processInboundMessage(
     try {
       const downloaded = await downloadMediaFromItem(mediaItem, {
         cdnBaseUrl: account.cdnBaseUrl,
-        saveMedia: async (buf, mime) => {
+        saveMedia: async (buf, mime, subdir) => {
           // Simple file save - in production would use proper temp file handling
-          const tmpDir = MEDIA_OUTBOUND_TEMP_DIR;
+          const tmpDir = path.join(MEDIA_OUTBOUND_TEMP_DIR, subdir ?? "");
           const fs = await import("node:fs");
           fs.mkdirSync(tmpDir, { recursive: true });
           const ext = mime?.split("/")[1] ?? "bin";
           const filePath = path.join(tmpDir, `media-${Date.now()}.${ext}`);
           fs.writeFileSync(filePath, buf);
-          return filePath;
+          return { path: filePath };
         },
         log,
         errLog,
