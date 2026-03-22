@@ -1,9 +1,12 @@
 {
   "name": "openbot-weixin",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Pure WeChat API client library",
   "license": "MIT",
-  "author": "Tencent",
+  "author": "denghongcai",
+  "contributors": [
+    "Tencent"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "files": [
