@@ -1,4 +1,4 @@
-# openbot-weixin
+# botsdk-weixin
 
 [简体中文](./README.zh_CN.md)
 
@@ -10,7 +10,7 @@ This project is forked from [Tencent's openclaw-weixin](https://github.com/tence
 
 ## Overview
 
-`openbot-weixin` is a **pure WeChat API client library** that allows you to interact with WeChat/Weixin through a simple and clean API. It is designed to be framework-agnostic — no OpenClaw or other framework dependencies required.
+`botsdk-weixin` is a **pure WeChat API client library** that allows you to interact with WeChat/Weixin through a simple and clean API. It is designed to be framework-agnostic — no OpenClaw or other framework dependencies required.
 
 ### What you can do with this library:
 
@@ -23,7 +23,7 @@ This project is forked from [Tencent's openclaw-weixin](https://github.com/tence
 ## Installation
 
 ```bash
-npm install openbot-weixin
+npm install botsdk-weixin
 ```
 
 ## Quick Start
@@ -31,7 +31,7 @@ npm install openbot-weixin
 ### 1. QR Code Login
 
 ```typescript
-import { loginWithQr, waitForLogin, saveWeixinAccount } from "openbot-weixin";
+import { loginWithQr, waitForLogin, saveWeixinAccount } from "botsdk-weixin";
 
 const account = await loginWithQr({
   baseUrl: "https://ilinkai.weixin.qq.com",
@@ -56,7 +56,7 @@ if (result.status === "confirmed") {
 ### 2. Create a Message Poller
 
 ```typescript
-import { createPoller, type TextMessage, type MediaMessage } from "openbot-weixin";
+import { createPoller, type TextMessage, type MediaMessage } from "botsdk-weixin";
 
 const account = {
   accountId: "my-bot",
@@ -116,12 +116,12 @@ const poller = createPoller({
 ### 3. Send Messages Directly
 
 ```typescript
-import { sendMessageWeixin, sendImageMessageWeixin } from "openbot-weixin";
+import { sendMessageWeixin, sendImageMessageWeixin } from "botsdk-weixin";
 
 // Send a text message
 await sendMessageWeixin({
   to: "user-id",
-  text: "Hello from openbot-weixin!",
+  text: "Hello from botsdk-weixin!",
   opts: {
     baseUrl: "https://ilinkai.weixin.qq.com",
     token: "your-token",
@@ -153,7 +153,7 @@ await sendImageMessageWeixin({
 If you prefer more control over the message loop:
 
 ```typescript
-import { getUpdates, markdownToPlainText } from "openbot-weixin";
+import { getUpdates, markdownToPlainText } from "botsdk-weixin";
 
 async function messageLoop() {
   let syncBuf = "";

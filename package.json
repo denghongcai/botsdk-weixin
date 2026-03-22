@@ -1,5 +1,5 @@
 {
-  "name": "openbot-weixin",
+  "name": "botsdk-weixin",
   "version": "0.0.1",
   "description": "Pure WeChat API client library",
   "license": "MIT",

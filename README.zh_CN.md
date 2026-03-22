@@ -1,4 +1,4 @@
-# openbot-weixin
+# botsdk-weixin
 
 [English](./README.md)
 
@@ -10,7 +10,7 @@
 
 ## 概述
 
-`openbot-weixin` 是一个**纯净的微信 API 客户端库**，可以通过简单清晰的 API 与微信/Weixin 进行交互。它设计为框架无关——无需 OpenClaw 或其他框架依赖。
+`botsdk-weixin` 是一个**纯净的微信 API 客户端库**，可以通过简单清晰的 API 与微信/Weixin 进行交互。它设计为框架无关——无需 OpenClaw 或其他框架依赖。
 
 ### 使用这个库可以实现：
 
@@ -23,7 +23,7 @@
 ## 安装
 
 ```bash
-npm install openbot-weixin
+npm install botsdk-weixin
 ```
 
 ## 快速开始
@@ -31,7 +31,7 @@ npm install openbot-weixin
 ### 1. 扫码登录
 
 ```typescript
-import { loginWithQr, waitForLogin, saveWeixinAccount } from "openbot-weixin";
+import { loginWithQr, waitForLogin, saveWeixinAccount } from "botsdk-weixin";
 
 const account = await loginWithQr({
   baseUrl: "https://ilinkai.weixin.qq.com",
@@ -56,7 +56,7 @@ if (result.status === "confirmed") {
 ### 2. 创建消息轮询器
 
 ```typescript
-import { createPoller, type TextMessage, type MediaMessage } from "openbot-weixin";
+import { createPoller, type TextMessage, type MediaMessage } from "botsdk-weixin";
 
 const account = {
   accountId: "my-bot",
@@ -116,12 +116,12 @@ const poller = createPoller({
 ### 3. 直接发送消息
 
 ```typescript
-import { sendMessageWeixin, sendImageMessageWeixin } from "openbot-weixin";
+import { sendMessageWeixin, sendImageMessageWeixin } from "botsdk-weixin";
 
 // 发送文本消息
 await sendMessageWeixin({
   to: "user-id",
-  text: "你好，来自 openbot-weixin！",
+  text: "你好，来自 botsdk-weixin！",
   opts: {
     baseUrl: "https://ilinkai.weixin.qq.com",
     token: "your-token",
@@ -153,7 +153,7 @@ await sendImageMessageWeixin({
 如果需要更多控制权：
 
 ```typescript
-import { getUpdates } from "openbot-weixin";
+import { getUpdates } from "botsdk-weixin";
 
 async function messageLoop() {
   let syncBuf = "";
