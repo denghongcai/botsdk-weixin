@@ -28,9 +28,7 @@ export { DEFAULT_BASE_URL, CDN_BASE_URL } from "./config/constants.js";
 
 // Messaging
 export { markdownToPlainText, sendMessageWeixin, sendImageMessageWeixin, sendVideoMessageWeixin, sendFileMessageWeixin } from "./messaging/send.js";
-export { handleSlashCommand } from "./messaging/slash-commands.js";
 export { sendWeixinErrorNotice } from "./messaging/error-notice.js";
-export { weixinMessageToMsgContext, getContextTokenFromMsgContext, isMediaItem } from "./messaging/inbound.js";
 
 // Monitor / Polling
 export { createPoller } from "./monitor/poller.js";
@@ -49,7 +47,6 @@ export type {
   WeixinAccountData,
 } from "./types/index.js";
 export type { WeixinAccount, SyncBuf } from "./types/account.js";
-export type { WeixinMessageCallbacks } from "./types/callbacks.js";
 
 // SDK utilities (for internal use, but exported for advanced users)
 export { normalizeAccountId } from "./sdk/normalize-account-id.js";

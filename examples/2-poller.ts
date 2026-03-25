@@ -1,10 +1,9 @@
 /**
- * Example 2: Message Polling
+ * Example 2: Message Polling with Async Iterable
  *
- * Demonstrates how to poll for incoming messages using callbacks.
- * The caller manages syncBuf persistence - this example shows the pattern.
+ * Demonstrates the async iterable interface for receiving messages.
  */
-import { createPoller, type TextMessage, type MediaMessage } from "../src/index.js";
+import { createPoller, type InboundMessage, type TextMessage, type MediaMessage } from "../src/index.js";
 
 interface Credentials {
   accountId: string;
@@ -27,7 +26,10 @@ const credentials: Credentials = {
 // Caller manages syncBuf persistence
 let syncBufValue = "";
 
-// Step 1: Create the poller
+// AbortController for stopping
+const controller = new AbortController();
+
+// Create the poller
 const poller = createPoller({
   account: {
     accountId: credentials.accountId,
@@ -59,39 +61,52 @@ const poller = createPoller({
     }
   },
 
-  // Message callbacks
-  callbacks: {
-    onTextMessage: async (msg: TextMessage) => {
-      console.log(`\n[Text] From: ${msg.fromUserId}`);
-      console.log(`[Text] Content: ${msg.content}`);
-      console.log(`[Text] ContextToken: ${msg.contextToken}`);
-
-      // IMPORTANT: Save the contextToken for replying
-      // In production: store in your own storage keyed by userId
-    },
-
-    onMediaMessage: async (msg: MediaMessage) => {
-      console.log(`\n[Media] From: ${msg.fromUserId}`);
-      console.log(`[Media] Type: ${msg.mediaType}`);
-      console.log(`[Media] Path: ${msg.mediaPath}`);
-      console.log(`[Media] ContextToken: ${msg.contextToken}`);
-    },
-
-    onError: (err, context) => {
-      console.error(`[Error] ${context}: ${err.message}`);
-    },
-  },
-
-  // Custom timeouts
-  longPollTimeoutMs: 35_000,
+  // Abort signal for stopping
+  abortSignal: controller.signal,
 });
 
-console.log("Poller started. Waiting for messages...");
-console.log("Press Ctrl+C to stop.\n");
+// Message handler using for await...of
+(async () => {
+  console.log("Poller started. Waiting for messages...");
+  console.log("Press Ctrl+C to stop.\n");
+
+  try {
+    for await (const msg of poller.messages()) {
+      if (msg.type === "text") {
+        handleText(msg as TextMessage);
+      } else {
+        handleMedia(msg as MediaMessage);
+      }
+    }
+  } catch (err) {
+    // Network errors, API errors, etc.
+    console.error(`[Error] Poller error: ${err}`);
+  }
+
+  console.log("[Poller] Stream ended");
+})();
+
+function handleText(msg: TextMessage) {
+  console.log(`\n[Text] From: ${msg.fromUserId}`);
+  console.log(`[Text] Content: ${msg.content}`);
+  console.log(`[Text] ContextToken: ${msg.contextToken}`);
+  console.log(`[Text] Timestamp: ${msg.timestamp}`);
+
+  // IMPORTANT: Save the contextToken for replying
+  // In production: store in your own storage keyed by userId
+}
+
+function handleMedia(msg: MediaMessage) {
+  console.log(`\n[Media] From: ${msg.fromUserId}`);
+  console.log(`[Media] Type: ${msg.type}`);
+  console.log(`[Media] Path: ${msg.mediaPath}`);
+  console.log(`[Media] MediaType: ${msg.mediaType}`);
+  console.log(`[Media] ContextToken: ${msg.contextToken}`);
+}
 
 // Handle shutdown gracefully
 process.on("SIGINT", () => {
   console.log("\nStopping poller...");
-  poller.stop();
+  controller.abort();
   process.exit(0);
 });

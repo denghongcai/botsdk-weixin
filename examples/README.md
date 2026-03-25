@@ -22,22 +22,29 @@ const account = {
   userId: result.userId,
 };
 
-// 2. Poll for messages
+// 2. Poll for messages using async iterable
 const syncBuf = { value: "" };
+const controller = new AbortController();
+
 const poller = createPoller({
   account,
   syncBuf,
-  onSyncBufUpdate: (buf) => { syncBuf.value = buf; /* persist */ },
-  callbacks: {
-    onTextMessage: async (msg) => {
-      console.log(`${msg.fromUserId}: ${msg.content}`);
-      // Save contextToken and use it to reply
-    },
-  },
+  onSyncBufUpdate: (buf) => { syncBuf.value = buf; },
+  abortSignal: controller.signal,
 });
 
+(async () => {
+  try {
+    for await (const msg of poller.messages()) {
+      console.log(`${msg.fromUserId}: ${msg.type === "text" ? msg.content : "[media]"}`);
+    }
+  } catch (err) {
+    console.error("Poller error:", err);
+  }
+})();
+
 // 3. Stop
-poller.stop();
+controller.abort();
 ```
 
 ## Examples
@@ -45,7 +52,7 @@ poller.stop();
 | File | Description |
 |------|-------------|
 | [1-login.ts](./1-login.ts) | QR code login flow |
-| [2-poller.ts](./2-poller.ts) | Long-poll message loop with callbacks |
+| [2-poller.ts](./2-poller.ts) | Async iterable message polling |
 | [3-send.ts](./3-send.ts) | Send text, image, video, file messages |
 | [4-context-tokens.ts](./4-context-tokens.ts) | Context token management pattern |
 
@@ -67,13 +74,29 @@ npx tsx examples/4-context-tokens.ts
 
 ## Key Concepts
 
-### Imperative API
+### Async Iterable Poller
 
-All state is managed by you, not the library:
+Messages are received via `for await...of` loop:
 
-- **Credentials**: You construct `WeixinAccount` objects and manage persistence
-- **Sync Buf**: Passed to poller, updated via callback, you decide where to store
-- **Context Tokens**: Returned from inbound messages, you store and retrieve for replies
+```typescript
+const controller = new AbortController();
+const poller = createPoller({ account, syncBuf, abortSignal: controller.signal });
+
+try {
+  for await (const msg of poller.messages()) {
+    if (msg.type === "text") {
+      console.log(`${msg.fromUserId}: ${msg.content}`);
+    }
+    // ...
+  }
+} catch (err) {
+  // Network errors, API errors, etc.
+  console.error("Poller error:", err);
+}
+
+// Stop polling
+controller.abort();
+```
 
 ### WeixinAccount
 
@@ -94,17 +117,38 @@ interface WeixinAccount {
 Each inbound message has a `contextToken`. You **must** use the same token when sending a reply to that user. Store it per-user:
 
 ```typescript
-// In your message handler
-callbacks.onTextMessage = async (msg) => {
-  // Store: userId -> contextToken
-  await db.saveContextToken(msg.fromUserId, msg.contextToken);
+// In your for await loop
+for await (const msg of poller.messages()) {
+  if (msg.type === "text") {
+    // Store: userId -> contextToken
+    await db.saveContextToken(msg.fromUserId, msg.contextToken);
+  }
+}
 
-  // Later, when replying:
-  const token = await db.getContextToken(msg.fromUserId);
-  await sendMessageWeixin({
-    to: msg.fromUserId,
-    text: "Hello!",
-    opts: { contextToken: token, ... },
-  });
-};
+// Later, when replying:
+const token = await db.getContextToken(toUserId);
+await sendMessageWeixin({
+  to: toUserId,
+  text: "Hello!",
+  opts: { contextToken: token, ... },
+});
+```
+
+### Status Changes
+
+Connection status is reported via callback:
+
+```typescript
+const poller = createPoller({
+  account,
+  syncBuf,
+  onStatusChange: (status) => {
+    if (status.connected) {
+      console.log("Connected");
+    } else {
+      console.log(`Disconnected: ${status.error}`);
+    }
+  },
+  abortSignal: controller.signal,
+});
 ```

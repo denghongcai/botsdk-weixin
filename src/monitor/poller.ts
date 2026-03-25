@@ -1,15 +1,37 @@
 /**
  * Weixin long-poll poller
  *
- * Provides a simple polling interface that calls message callbacks.
- * This replaces the OpenClaw-integrated monitor.ts
+ * Provides an async iterable interface for receiving messages.
+ * All state (sync buf) is managed imperatively by the caller.
  *
- * All state (sync buf, context tokens) is managed imperatively by the caller.
+ * @example
+ * const controller = new AbortController();
+ * const poller = createPoller({
+ *   account,
+ *   syncBuf,
+ *   onSyncBufUpdate: (buf) => { syncBuf.value = buf; },
+ *   onStatusChange: (s) => console.log("Status:", s),
+ *   abortSignal: controller.signal,
+ * });
+ *
+ * (async () => {
+ *   try {
+ *     for await (const msg of poller.messages()) {
+ *       if (msg.type === "text") {
+ *         console.log(`${msg.fromUserId}: ${msg.content}`);
+ *       }
+ *     }
+ *   } catch (err) {
+ *     console.error("Poller error:", err);
+ *   }
+ * })();
+ *
+ * // Stop: controller.abort()
  */
 import { getUpdates } from "../api/api.js";
 import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
 import type { WeixinAccount, SyncBuf } from "../types/account.js";
-import type { WeixinMessageCallbacks } from "../types/callbacks.js";
+import type { InboundMessage } from "../types/index.js";
 import { processInboundMessage } from "../messaging/processor.js";
 import { logger } from "../util/logger.js";
 
@@ -21,8 +43,6 @@ const RETRY_DELAY_MS = 2_000;
 export interface PollerOptions {
   /** Account object with credentials. Caller manages persistence. */
   account: WeixinAccount;
-  /** Message callbacks implemented by the consumer */
-  callbacks: WeixinMessageCallbacks;
   /** Sync buf state managed by caller. Updated via onSyncBufUpdate callback. */
   syncBuf: SyncBuf;
   /** Called when sync buf changes so caller can persist it */
@@ -39,31 +59,17 @@ export interface PollerOptions {
   longPollTimeoutMs?: number;
 }
 
+export interface Poller {
+  /** Async iterable stream of inbound messages */
+  messages(): AsyncGenerator<InboundMessage>;
+}
+
 /**
  * Create a Weixin message poller
- *
- * @example
- * const syncBuf = { value: "" };
- * const poller = createPoller({
- *   account: { accountId, baseUrl, cdnBaseUrl, token },
- *   syncBuf,
- *   onSyncBufUpdate: (buf) => { syncBuf.value = buf; },
- *   callbacks: {
- *     onTextMessage: async (msg) => {
- *       console.log('Received:', msg.content);
- *     },
- *     onMediaMessage: async (msg) => {
- *       console.log('Media:', msg.mediaPath);
- *     },
- *   },
- * });
- *
- * // Later: poller.stop()
  */
-export function createPoller(opts: PollerOptions): { stop: () => void } {
+export function createPoller(opts: PollerOptions): Poller {
   const {
     account,
-    callbacks,
     syncBuf,
     onSyncBufUpdate,
     onStatusChange,
@@ -74,17 +80,12 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
   } = opts;
 
   const accountLog = logger.withAccount(account.accountId);
-  let nextTimeoutMs = longPollTimeoutMs;
-  let consecutiveFailures = 0;
-  let stopped = false;
 
-  function stop() {
-    stopped = true;
-    accountLog.info("Poller stopped");
-  }
+  async function* messages(): AsyncGenerator<InboundMessage> {
+    let nextTimeoutMs = longPollTimeoutMs;
+    let consecutiveFailures = 0;
 
-  async function run() {
-    while (!stopped && !abortSignal?.aborted) {
+    while (!abortSignal?.aborted) {
       try {
         const resp = await getUpdates({
           baseUrl: account.baseUrl,
@@ -131,7 +132,7 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
           nextTimeoutMs = resp.longpolling_timeout_ms;
         }
 
-        // Process messages
+        // Process messages and yield
         const list = resp.msgs ?? [];
         for (const msg of list) {
           accountLog.info(
@@ -139,14 +140,20 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
           );
 
           try {
-            await processInboundMessage(msg, callbacks, {
+            const result = await processInboundMessage(msg, {
               account,
               log: accountLog.info.bind(accountLog),
               errLog: accountLog.error.bind(accountLog),
             });
+
+            // processInboundMessage returns null for handled commands
+            if (result) {
+              yield result;
+            }
           } catch (err) {
-            callbacks.onError?.(err as Error, "processInboundMessage");
             errLog(`Error processing message: ${String(err)}`);
+            // Error thrown out of iterator
+            throw err;
           }
         }
       } catch (err) {
@@ -154,25 +161,14 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
           accountLog.info("Poller aborted");
           return;
         }
-        consecutiveFailures++;
-        errLog(`getUpdates error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${String(err)}`);
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-          consecutiveFailures = 0;
-          await sleep(BACKOFF_DELAY_MS, abortSignal);
-        } else {
-          await sleep(2000, abortSignal);
-        }
+        // Network errors, etc - throw out of iterator
+        throw err;
       }
     }
     accountLog.info("Poller ended");
   }
 
-  // Start polling
-  run().catch((err) => {
-    callbacks.onError?.(err, "poller");
-  });
-
-  return { stop };
+  return { messages };
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

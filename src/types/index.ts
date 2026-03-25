@@ -14,18 +14,8 @@ export interface ResolvedWeixinAccount {
   name?: string;
 }
 
-/** Unified inbound message from Weixin getUpdates */
-export interface InboundMessage {
-  messageId: string;
-  fromUserId: string;
-  toUserId: string;
-  type: "text" | "image" | "video" | "voice" | "file";
-  content: string;
-  contextToken?: string;
-  mediaPath?: string;
-  mediaType?: string;
-  timestamp?: number;
-}
+/** Unified inbound message - either text or media */
+export type InboundMessage = TextMessage | MediaMessage;
 
 /** Text message inbound */
 export interface TextMessage {

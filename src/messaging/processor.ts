@@ -1,21 +1,19 @@
 /**
  * Inbound message processor
  *
- * Processes Weixin messages and calls the appropriate callbacks.
- * This replaces the OpenClaw-integrated process-message.ts
+ * Transforms Weixin messages into typed InboundMessage objects.
+ * No file I/O, no callbacks - pure transformation.
  */
 import path from "node:path";
 
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
-import type { TextMessage, MediaMessage } from "../types/index.js";
+import type { InboundMessage, TextMessage, MediaMessage } from "../types/index.js";
 import type { WeixinAccount } from "../types/account.js";
-import type { WeixinMessageCallbacks } from "../types/callbacks.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { handleSlashCommand } from "./slash-commands.js";
 import { weixinMessageToMsgContext, type WeixinInboundMediaOpts } from "./inbound.js";
 import { resolvePreferredOpenClawTmpDir } from "../sdk/tmp-dir.js";
-import { logger } from "../util/logger.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
@@ -40,21 +38,21 @@ function extractTextBody(itemList?: { type?: number; text_item?: { text?: string
 
 /**
  * Process a single inbound Weixin message.
- * Returns the contextToken from the message so the caller can manage it imperatively.
+ * Returns the processed message, or null if the message was handled internally
+ * (e.g., slash commands).
  */
 export async function processInboundMessage(
   msg: WeixinMessage,
-  callbacks: WeixinMessageCallbacks,
   deps: ProcessorDeps,
-): Promise<{ contextToken?: string }> {
+): Promise<InboundMessage | null> {
   const receivedAt = Date.now();
   const { account, log, errLog } = deps;
 
   const textBody = extractTextBody(msg.item_list);
 
-  // Handle slash commands first
-  if (textBody.startsWith("/") && callbacks.sendText) {
-    const slashResult = await handleSlashCommand(textBody, {
+  // Handle slash commands first (fire and forget for now)
+  if (textBody.startsWith("/")) {
+    await handleSlashCommand(textBody, {
       to: msg.from_user_id ?? "",
       contextToken: msg.context_token,
       baseUrl: account.baseUrl,
@@ -63,11 +61,8 @@ export async function processInboundMessage(
       log,
       errLog,
     }, receivedAt, msg.create_time_ms);
-
-    if (slashResult.handled) {
-      log("Slash command handled");
-      return { contextToken: msg.context_token };
-    }
+    log("Slash command handled");
+    return null;
   }
 
   // Find the first downloadable media item
@@ -99,7 +94,6 @@ export async function processInboundMessage(
 
   // Download media if present
   const mediaOpts: WeixinInboundMediaOpts = {};
-  let mediaDownloaded = false;
 
   const mediaItem = mainMediaItem ?? refMediaItem;
   if (mediaItem) {
@@ -107,7 +101,6 @@ export async function processInboundMessage(
       const downloaded = await downloadMediaFromItem(mediaItem, {
         cdnBaseUrl: account.cdnBaseUrl,
         saveMedia: async (buf, mime, subdir) => {
-          // Simple file save - in production would use proper temp file handling
           const tmpDir = path.join(MEDIA_OUTBOUND_TEMP_DIR, subdir ?? "");
           const fs = await import("node:fs");
           fs.mkdirSync(tmpDir, { recursive: true });
@@ -121,7 +114,6 @@ export async function processInboundMessage(
         label: refMediaItem ? "ref" : "inbound",
       });
       Object.assign(mediaOpts, downloaded);
-      mediaDownloaded = true;
     } catch (err) {
       errLog(`Media download failed: ${String(err)}`);
     }
@@ -129,8 +121,10 @@ export async function processInboundMessage(
 
   // Build message ID
   const messageId = msg.message_id?.toString() ?? `msg-${Date.now()}`;
+  const fromUserId = msg.from_user_id ?? "";
+  const toUserId = msg.to_user_id ?? "";
 
-  // Build the context for callbacks
+  // Build the context
   const ctx = weixinMessageToMsgContext(msg, account.accountId, mediaOpts);
 
   if (mediaItem && (mediaOpts.decryptedPicPath || mediaOpts.decryptedVideoPath || mediaOpts.decryptedFilePath || mediaOpts.decryptedVoicePath)) {
@@ -146,8 +140,8 @@ export async function processInboundMessage(
 
     const mediaMsg: MediaMessage = {
       type: getMediaType(mediaItem.type),
-      fromUserId: msg.from_user_id ?? "",
-      toUserId: msg.to_user_id ?? "",
+      fromUserId,
+      toUserId,
       mediaPath,
       mediaType,
       messageId,
@@ -155,23 +149,21 @@ export async function processInboundMessage(
       timestamp: msg.create_time_ms,
     };
 
-    await callbacks.onMediaMessage?.(mediaMsg);
+    return mediaMsg;
   } else {
     // It's a text message
     const textMsg: TextMessage = {
       type: "text",
-      fromUserId: msg.from_user_id ?? "",
-      toUserId: msg.to_user_id ?? "",
+      fromUserId,
+      toUserId,
       content: ctx.Body ?? textBody,
       messageId,
       contextToken: msg.context_token,
       timestamp: msg.create_time_ms,
     };
 
-    await callbacks.onTextMessage?.(textMsg);
+    return textMsg;
   }
-
-  return { contextToken: msg.context_token };
 }
 
 function isMediaItem(item: { type?: number }): boolean {
