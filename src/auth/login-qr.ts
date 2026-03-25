@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import { loadConfigRouteTag } from "./accounts.js";
 import { logger } from "../util/logger.js";
 import { redactToken } from "../util/redact.js";
 
@@ -51,15 +50,14 @@ function purgeExpiredLogins(): void {
   }
 }
 
-async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeResponse> {
+async function fetchQRCode(apiBaseUrl: string, botType: string, routeTag?: string): Promise<QRCodeResponse> {
   const base = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
   const url = new URL(`ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`, base);
   logger.info(`Fetching QR code from: ${url.toString()}`);
 
   const headers: Record<string, string> = {};
-  const routeTag = loadConfigRouteTag();
-  if (routeTag) {
-    headers.SKRouteTag = routeTag;
+  if (routeTag?.trim()) {
+    headers.SKRouteTag = routeTag.trim();
   }
 
   const response = await fetch(url.toString(), { headers });
@@ -71,7 +69,7 @@ async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeR
   return await response.json() as Promise<QRCodeResponse>;
 }
 
-async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusResponse> {
+async function pollQRStatus(apiBaseUrl: string, qrcode: string, routeTag?: string): Promise<StatusResponse> {
   const base = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
   const url = new URL(`ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`, base);
   logger.debug(`Long-poll QR status from: ${url.toString()}`);
@@ -79,9 +77,8 @@ async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusR
   const headers: Record<string, string> = {
     "iLink-App-ClientVersion": "1",
   };
-  const routeTag = loadConfigRouteTag();
-  if (routeTag) {
-    headers.SKRouteTag = routeTag;
+  if (routeTag?.trim()) {
+    headers.SKRouteTag = routeTag.trim();
   }
 
   const controller = new AbortController();
@@ -130,6 +127,7 @@ export async function startWeixinLoginWithQr(opts: {
   accountId?: string;
   apiBaseUrl: string;
   botType?: string;
+  routeTag?: string;
 }): Promise<WeixinQrStartResult> {
   const sessionKey = opts.accountId || randomUUID();
 
@@ -156,7 +154,7 @@ export async function startWeixinLoginWithQr(opts: {
       };
     }
 
-    const qrResponse = await fetchQRCode(opts.apiBaseUrl, botType);
+    const qrResponse = await fetchQRCode(opts.apiBaseUrl, botType, opts.routeTag);
     logger.info(
       `QR code received, qrcode=${redactToken(qrResponse.qrcode)} imgContentLen=${qrResponse.qrcode_img_content?.length ?? 0}`,
     );
@@ -194,6 +192,7 @@ export async function waitForWeixinLogin(opts: {
   sessionKey: string;
   apiBaseUrl: string;
   botType?: string;
+  routeTag?: string;
 }): Promise<WeixinQrWaitResult> {
   let activeLogin = activeLogins.get(opts.sessionKey);
 
@@ -223,7 +222,7 @@ export async function waitForWeixinLogin(opts: {
 
   while (Date.now() < deadline) {
     try {
-      const statusResponse = await pollQRStatus(opts.apiBaseUrl, activeLogin.qrcode);
+      const statusResponse = await pollQRStatus(opts.apiBaseUrl, activeLogin.qrcode, opts.routeTag);
       logger.debug(`pollQRStatus: status=${statusResponse.status} hasBotToken=${Boolean(statusResponse.bot_token)} hasBotId=${Boolean(statusResponse.ilink_bot_id)}`);
       activeLogin.status = statusResponse.status;
 
@@ -259,7 +258,7 @@ export async function waitForWeixinLogin(opts: {
 
           try {
             const botType = opts.botType || DEFAULT_ILINK_BOT_TYPE;
-            const qrResponse = await fetchQRCode(opts.apiBaseUrl, botType);
+            const qrResponse = await fetchQRCode(opts.apiBaseUrl, botType, opts.routeTag);
             activeLogin.qrcode = qrResponse.qrcode;
             activeLogin.qrcodeUrl = qrResponse.qrcode_img_content;
             activeLogin.startedAt = Date.now();

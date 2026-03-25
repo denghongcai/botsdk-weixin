@@ -3,10 +3,12 @@
  *
  * Provides a simple polling interface that calls message callbacks.
  * This replaces the OpenClaw-integrated monitor.ts
+ *
+ * All state (sync buf, context tokens) is managed imperatively by the caller.
  */
 import { getUpdates } from "../api/api.js";
 import { SESSION_EXPIRED_ERRCODE, pauseSession, getRemainingPauseMs } from "../api/session-guard.js";
-import type { ResolvedWeixinAccount, InboundMessage } from "../types/index.js";
+import type { WeixinAccount, SyncBuf } from "../types/account.js";
 import type { WeixinMessageCallbacks } from "../types/callbacks.js";
 import { processInboundMessage } from "../messaging/processor.js";
 import { logger } from "../util/logger.js";
@@ -17,10 +19,14 @@ const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 
 export interface PollerOptions {
-  /** Resolved account with credentials */
-  account: ResolvedWeixinAccount;
+  /** Account object with credentials. Caller manages persistence. */
+  account: WeixinAccount;
   /** Message callbacks implemented by the consumer */
   callbacks: WeixinMessageCallbacks;
+  /** Sync buf state managed by caller. Updated via onSyncBufUpdate callback. */
+  syncBuf: SyncBuf;
+  /** Called when sync buf changes so caller can persist it */
+  onSyncBufUpdate?: (buf: string) => void;
   /** Called on connection status changes */
   onStatusChange?: (status: { connected: boolean; error?: string }) => void;
   /** Custom log function */
@@ -33,21 +39,18 @@ export interface PollerOptions {
   longPollTimeoutMs?: number;
 }
 
-interface SyncBuf {
-  value: string;
-  save: (buf: string) => void;
-}
-
 /**
  * Create a Weixin message poller
  *
  * @example
+ * const syncBuf = { value: "" };
  * const poller = createPoller({
- *   account: resolvedAccount,
+ *   account: { accountId, baseUrl, cdnBaseUrl, token },
+ *   syncBuf,
+ *   onSyncBufUpdate: (buf) => { syncBuf.value = buf; },
  *   callbacks: {
  *     onTextMessage: async (msg) => {
  *       console.log('Received:', msg.content);
- *       // Reply using callbacks.sendText if needed
  *     },
  *     onMediaMessage: async (msg) => {
  *       console.log('Media:', msg.mediaPath);
@@ -61,6 +64,8 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
   const {
     account,
     callbacks,
+    syncBuf,
+    onSyncBufUpdate,
     onStatusChange,
     log = () => {},
     errLog = (m) => console.error(m),
@@ -69,7 +74,6 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
   } = opts;
 
   const accountLog = logger.withAccount(account.accountId);
-  let getUpdatesBuf = "";
   let nextTimeoutMs = longPollTimeoutMs;
   let consecutiveFailures = 0;
   let stopped = false;
@@ -85,7 +89,8 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
         const resp = await getUpdates({
           baseUrl: account.baseUrl,
           token: account.token,
-          get_updates_buf: getUpdatesBuf,
+          routeTag: account.routeTag,
+          get_updates_buf: syncBuf.value,
           timeoutMs: nextTimeoutMs,
         });
 
@@ -115,9 +120,10 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
         consecutiveFailures = 0;
         onStatusChange?.({ connected: true });
 
-        // Update sync buf
+        // Update sync buf and notify caller
         if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
-          getUpdatesBuf = resp.get_updates_buf;
+          syncBuf.value = resp.get_updates_buf;
+          onSyncBufUpdate?.(resp.get_updates_buf);
         }
 
         // Update next poll timeout
@@ -133,11 +139,8 @@ export function createPoller(opts: PollerOptions): { stop: () => void } {
           );
 
           try {
-            await processInboundMessage(msg, account, callbacks, {
-              accountId: account.accountId,
-              baseUrl: account.baseUrl,
-              cdnBaseUrl: account.cdnBaseUrl,
-              token: account.token,
+            await processInboundMessage(msg, callbacks, {
+              account,
               log: accountLog.info.bind(accountLog),
               errLog: accountLog.error.bind(accountLog),
             });

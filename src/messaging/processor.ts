@@ -8,22 +8,19 @@ import path from "node:path";
 
 import type { WeixinMessage } from "../api/types.js";
 import { MessageItemType } from "../api/types.js";
-import type { ResolvedWeixinAccount, TextMessage, MediaMessage } from "../types/index.js";
+import type { TextMessage, MediaMessage } from "../types/index.js";
+import type { WeixinAccount } from "../types/account.js";
 import type { WeixinMessageCallbacks } from "../types/callbacks.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
 import { handleSlashCommand } from "./slash-commands.js";
 import { weixinMessageToMsgContext, type WeixinInboundMediaOpts } from "./inbound.js";
-import { setContextToken } from "./inbound.js";
 import { resolvePreferredOpenClawTmpDir } from "../sdk/tmp-dir.js";
 import { logger } from "../util/logger.js";
 
 const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
 
 interface ProcessorDeps {
-  accountId: string;
-  baseUrl: string;
-  cdnBaseUrl: string;
-  token?: string;
+  account: WeixinAccount;
   log: (msg: string) => void;
   errLog: (msg: string) => void;
 }
@@ -42,16 +39,16 @@ function extractTextBody(itemList?: { type?: number; text_item?: { text?: string
 }
 
 /**
- * Process a single inbound Weixin message
+ * Process a single inbound Weixin message.
+ * Returns the contextToken from the message so the caller can manage it imperatively.
  */
 export async function processInboundMessage(
   msg: WeixinMessage,
-  account: ResolvedWeixinAccount,
   callbacks: WeixinMessageCallbacks,
   deps: ProcessorDeps,
-): Promise<void> {
+): Promise<{ contextToken?: string }> {
   const receivedAt = Date.now();
-  const { log, errLog } = deps;
+  const { account, log, errLog } = deps;
 
   const textBody = extractTextBody(msg.item_list);
 
@@ -69,7 +66,7 @@ export async function processInboundMessage(
 
     if (slashResult.handled) {
       log("Slash command handled");
-      return;
+      return { contextToken: msg.context_token };
     }
   }
 
@@ -130,11 +127,6 @@ export async function processInboundMessage(
     }
   }
 
-  // Cache context token
-  if (msg.context_token && msg.from_user_id) {
-    setContextToken(account.accountId, msg.from_user_id, msg.context_token);
-  }
-
   // Build message ID
   const messageId = msg.message_id?.toString() ?? `msg-${Date.now()}`;
 
@@ -178,6 +170,8 @@ export async function processInboundMessage(
 
     await callbacks.onTextMessage?.(textMsg);
   }
+
+  return { contextToken: msg.context_token };
 }
 
 function isMediaItem(item: { type?: number }): boolean {

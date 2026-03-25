@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfigRouteTag } from "../auth/accounts.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactUrl } from "../util/redact.js";
 
@@ -21,6 +20,7 @@ import type {
 export type WeixinApiOptions = {
   baseUrl: string;
   token?: string;
+  routeTag?: string;
   timeoutMs?: number;
   /** Long-poll timeout for getUpdates (server may hold the request up to this). */
   longPollTimeoutMs?: number;
@@ -65,7 +65,7 @@ function randomWechatUin(): string {
   return Buffer.from(String(uint32), "utf-8").toString("base64");
 }
 
-function buildHeaders(opts: { token?: string; body: string }): Record<string, string> {
+function buildHeaders(opts: { token?: string; body: string; routeTag?: string }): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
@@ -75,9 +75,8 @@ function buildHeaders(opts: { token?: string; body: string }): Record<string, st
   if (opts.token?.trim()) {
     headers.Authorization = `Bearer ${opts.token.trim()}`;
   }
-  const routeTag = loadConfigRouteTag();
-  if (routeTag) {
-    headers.SKRouteTag = routeTag;
+  if (opts.routeTag?.trim()) {
+    headers.SKRouteTag = opts.routeTag.trim();
   }
   logger.debug(
     `requestHeaders: ${JSON.stringify({ ...headers, Authorization: headers.Authorization ? "Bearer ***" : undefined })}`,
@@ -94,12 +93,13 @@ async function apiFetch(params: {
   endpoint: string;
   body: string;
   token?: string;
+  routeTag?: string;
   timeoutMs: number;
   label: string;
 }): Promise<string> {
   const base = ensureTrailingSlash(params.baseUrl);
   const url = new URL(params.endpoint, base);
-  const hdrs = buildHeaders({ token: params.token, body: params.body });
+  const hdrs = buildHeaders({ token: params.token, body: params.body, routeTag: params.routeTag });
   logger.debug(`POST ${redactUrl(url.toString())} body=${redactBody(params.body)}`);
 
   const controller = new AbortController();
@@ -134,6 +134,7 @@ export async function getUpdates(
   params: GetUpdatesReq & {
     baseUrl: string;
     token?: string;
+    routeTag?: string;
     timeoutMs?: number;
   },
 ): Promise<GetUpdatesResp> {
@@ -147,6 +148,7 @@ export async function getUpdates(
         base_info: buildBaseInfo(),
       }),
       token: params.token,
+      routeTag: params.routeTag,
       timeoutMs: timeout,
       label: "getUpdates",
     });
@@ -184,6 +186,7 @@ export async function getUploadUrl(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
   });
@@ -200,6 +203,7 @@ export async function sendMessage(
     endpoint: "ilink/bot/sendmessage",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
   });
@@ -218,6 +222,7 @@ export async function getConfig(
       base_info: buildBaseInfo(),
     }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
   });
@@ -234,6 +239,7 @@ export async function sendTyping(
     endpoint: "ilink/bot/sendtyping",
     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
     token: params.token,
+    routeTag: params.routeTag,
     timeoutMs: params.timeoutMs ?? DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });

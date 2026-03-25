@@ -1,7 +1,8 @@
 /**
- * openbot-weixin - Pure WeChat API client library
+ * botsdk-weixin - Pure WeChat API client library
  *
  * A standalone WeChat channel implementation without OpenClaw framework dependencies.
+ * All state is managed imperatively by the caller - no internal file I/O.
  */
 
 // API client
@@ -23,23 +24,13 @@ export {
   startWeixinLoginWithQr as loginWithQr,
   waitForWeixinLogin as waitForLogin,
 } from "./auth/login-qr.js";
-export {
-  resolveWeixinAccount,
-  loadWeixinAccount,
-  saveWeixinAccount,
-  listWeixinAccountIds,
-  registerWeixinAccountId,
-  listIndexedWeixinAccountIds,
-  DEFAULT_BASE_URL,
-  CDN_BASE_URL,
-} from "./auth/accounts.js";
-export { readFrameworkAllowFromList, registerUserInFrameworkStore } from "./auth/pairing.js";
+export { DEFAULT_BASE_URL, CDN_BASE_URL } from "./config/constants.js";
 
 // Messaging
 export { markdownToPlainText, sendMessageWeixin, sendImageMessageWeixin, sendVideoMessageWeixin, sendFileMessageWeixin } from "./messaging/send.js";
 export { handleSlashCommand } from "./messaging/slash-commands.js";
 export { sendWeixinErrorNotice } from "./messaging/error-notice.js";
-export { weixinMessageToMsgContext, setContextToken, getContextToken, getContextTokenFromMsgContext, isMediaItem } from "./messaging/inbound.js";
+export { weixinMessageToMsgContext, getContextTokenFromMsgContext, isMediaItem } from "./messaging/inbound.js";
 
 // Monitor / Polling
 export { createPoller } from "./monitor/poller.js";
@@ -50,7 +41,6 @@ export type { WeixinConfig } from "./types/index.js";
 
 // Public types
 export type {
-  ResolvedWeixinAccount,
   InboundMessage,
   TextMessage,
   MediaMessage,
@@ -58,6 +48,7 @@ export type {
   WeixinAccountConfig,
   WeixinAccountData,
 } from "./types/index.js";
+export type { WeixinAccount, SyncBuf } from "./types/account.js";
 export type { WeixinMessageCallbacks } from "./types/callbacks.js";
 
 // SDK utilities (for internal use, but exported for advanced users)
