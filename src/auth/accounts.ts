@@ -4,6 +4,7 @@ import path from "node:path";
 import { normalizeAccountId } from "../sdk/normalize-account-id.js";
 import type { WeixinConfig, ResolvedWeixinAccount } from "../types/index.js";
 import { resolveStateDir } from "../storage/state-dir.js";
+import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
 
 export const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -66,6 +67,39 @@ export function registerWeixinAccountId(accountId: string): void {
 
   const updated = [...existing, accountId];
   fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+}
+
+/** Remove accountId from the persistent index. */
+export function unregisterWeixinAccountId(accountId: string): void {
+  const existing = listIndexedWeixinAccountIds();
+  const updated = existing.filter((id) => id !== accountId);
+  if (updated.length !== existing.length) {
+    fs.writeFileSync(resolveAccountIndexPath(), JSON.stringify(updated, null, 2), "utf-8");
+  }
+}
+
+/**
+ * Remove stale accounts that share the same userId as the newly-bound account.
+ * Called after a successful QR login to ensure only the latest account remains
+ * for a given WeChat user, preventing ambiguous contextToken matches.
+ */
+export function clearStaleAccountsForUserId(
+  currentAccountId: string,
+  userId: string,
+  onClearContextTokens?: (accountId: string) => void,
+): void {
+  if (!userId) return;
+  const allIds = listIndexedWeixinAccountIds();
+  for (const id of allIds) {
+    if (id === currentAccountId) continue;
+    const data = loadWeixinAccount(id);
+    if (data?.userId?.trim() === userId) {
+      logger.info(`clearStaleAccountsForUserId: removing stale account=${id} (same userId=${userId})`);
+      onClearContextTokens?.(id);
+      clearWeixinAccount(id);
+      unregisterWeixinAccountId(id);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,10 +207,29 @@ export function saveWeixinAccount(
   }
 }
 
-/** Remove account data file. */
+/**
+ * Remove all files associated with an account:
+ *   - accounts/{accountId}.json                  (credentials)
+ *   - accounts/{accountId}.sync.json             (getUpdates sync buf)
+ *   - accounts/{accountId}.context-tokens.json   (context tokens on disk)
+ *   - credentials/openclaw-weixin-{accountId}-allowFrom.json (authorized users)
+ */
 export function clearWeixinAccount(accountId: string): void {
+  const dir = resolveAccountsDir();
+  const accountFiles = [
+    `${accountId}.json`,
+    `${accountId}.sync.json`,
+    `${accountId}.context-tokens.json`,
+  ];
+  for (const file of accountFiles) {
+    try {
+      fs.unlinkSync(path.join(dir, file));
+    } catch {
+      // ignore if not found
+    }
+  }
   try {
-    fs.unlinkSync(resolveAccountPath(accountId));
+    fs.unlinkSync(resolveFrameworkAllowFromPath(accountId));
   } catch {
     // ignore if not found
   }
@@ -196,29 +249,41 @@ function resolveConfigPath(): string {
  * Read `routeTag` from openclaw.json (for callers without an `OpenClawConfig` object).
  * Checks per-account `channels.<id>.accounts[accountId].routeTag` first, then section-level
  * `channels.<id>.routeTag`. Matches `feat_weixin_extension` behavior; channel key is `"openclaw-weixin"`.
+ *
+ * The config is cached after the first read since routeTag does not change at runtime.
  */
-export function loadConfigRouteTag(accountId?: string): string | undefined {
+let cachedRouteTagSection: Record<string, unknown> | null | undefined;
+
+function loadRouteTagSection(): Record<string, unknown> | null {
+  if (cachedRouteTagSection !== undefined) return cachedRouteTagSection;
   try {
     const configPath = resolveConfigPath();
-    if (!fs.existsSync(configPath)) return undefined;
+    if (!fs.existsSync(configPath)) { cachedRouteTagSection = null; return null; }
     const raw = fs.readFileSync(configPath, "utf-8");
     const cfg = JSON.parse(raw) as Record<string, unknown>;
     const channels = cfg.channels as Record<string, unknown> | undefined;
-    const section = channels?.["openclaw-weixin"] as Record<string, unknown> | undefined;
-    if (!section) return undefined;
-    if (accountId) {
-      const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
-      const tag = accounts?.[accountId]?.routeTag;
-      if (typeof tag === "number") return String(tag);
-      if (typeof tag === "string" && tag.trim()) return tag.trim();
-    }
-    if (typeof section.routeTag === "number") return String(section.routeTag);
-    return typeof section.routeTag === "string" && section.routeTag.trim()
-      ? section.routeTag.trim()
-      : undefined;
+    const section = (channels?.["openclaw-weixin"] as Record<string, unknown>) ?? null;
+    cachedRouteTagSection = section;
+    return section;
   } catch {
-    return undefined;
+    cachedRouteTagSection = null;
+    return null;
   }
+}
+
+export function loadConfigRouteTag(accountId?: string): string | undefined {
+  const section = loadRouteTagSection();
+  if (!section) return undefined;
+  if (accountId) {
+    const accounts = section.accounts as Record<string, Record<string, unknown>> | undefined;
+    const tag = accounts?.[accountId]?.routeTag;
+    if (typeof tag === "number") return String(tag);
+    if (typeof tag === "string" && tag.trim()) return tag.trim();
+  }
+  if (typeof section.routeTag === "number") return String(section.routeTag);
+  return typeof section.routeTag === "string" && section.routeTag.trim()
+    ? section.routeTag.trim()
+    : undefined;
 }
 
 /**
