@@ -12,13 +12,12 @@ This project is forked from [Tencent's openclaw-weixin](https://github.com/tence
 
 `botsdk-weixin` is a **pure WeChat API client library** that allows you to interact with WeChat/Weixin through a simple and clean API. It is designed to be framework-agnostic — no OpenClaw or other framework dependencies required.
 
-### What you can do with this library:
+### Features
 
 - **QR Code Login** — Authenticate with WeChat using QR code scanning
-- **Long-poll Messages** — Receive inbound messages via getUpdates polling
+- **Async Iterable Polling** — Receive messages via `for await...of`
 - **Send Messages** — Send text, images, videos, files, and voice messages
 - **CDN Media Upload/Download** — Handle media with AES-128-ECB encryption
-- **Typing Indicators** — Send/cancel typing status to users
 
 ## Installation
 
@@ -31,152 +30,83 @@ npm install botsdk-weixin
 ### 1. QR Code Login
 
 ```typescript
-import { loginWithQr, waitForLogin, saveWeixinAccount } from "botsdk-weixin";
+import { loginWithQr, waitForLogin } from "botsdk-weixin";
 
-const account = await loginWithQr({
-  baseUrl: "https://ilinkai.weixin.qq.com",
-  onQRCode: (dataUrl) => {
-    // Display the QR code to the user
-    console.log("Scan this QR code:", dataUrl);
-  },
+const login = await loginWithQr({
+  apiBaseUrl: "https://ilinkai.weixin.qq.com",
+  routeTag: undefined, // optional
 });
 
-const result = await waitForLogin(account);
+console.log("Scan QR:", login.qrcodeUrl);
 
-if (result.status === "confirmed") {
-  // Save credentials for later use
-  saveWeixinAccount(result.accountId, {
-    token: result.token,
+const result = await waitForLogin({
+  sessionKey: login.sessionKey,
+  apiBaseUrl: "https://ilinkai.weixin.qq.com",
+  routeTag: undefined,
+});
+
+if (result.connected) {
+  // Caller manages credentials - save to your own storage
+  const account = {
+    accountId: result.accountId,
+    token: result.botToken,
+    baseUrl: result.baseUrl,
+    cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
     userId: result.userId,
-  });
+  };
   console.log("Login successful!");
 }
 ```
 
-### 2. Create a Message Poller
+### 2. Poll for Messages (Async Iterable)
 
 ```typescript
-import { createPoller, type TextMessage, type MediaMessage } from "botsdk-weixin";
+import { createPoller } from "botsdk-weixin";
 
-const account = {
-  accountId: "my-bot",
-  baseUrl: "https://ilinkai.weixin.qq.com",
-  cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
-  token: "your-token-here",
-  enabled: true,
-  configured: true,
-};
+// Caller manages syncBuf and credentials
+const syncBuf = { value: "" };
+const controller = new AbortController();
 
 const poller = createPoller({
   account,
-
-  callbacks: {
-    onTextMessage: async (msg: TextMessage) => {
-      console.log(`Received from ${msg.fromUserId}: ${msg.content}`);
-
-      // Reply with the same text (echo example)
-      // In production, you would integrate with your AI backend here
-      if (callbacks.sendText) {
-        await callbacks.sendText({
-          to: msg.fromUserId,
-          text: `Echo: ${msg.content}`,
-          contextToken: msg.contextToken,
-        });
-      }
-    },
-
-    onMediaMessage: async (msg: MediaMessage) => {
-      console.log(`Received media from ${msg.fromUserId}:`);
-      console.log(`  Type: ${msg.mediaType}`);
-      console.log(`  Path: ${msg.mediaPath}`);
-    },
-
-    onError: (err, context) => {
-      console.error(`Error in ${context}:`, err);
-    },
-
-    // Implement sendText to reply to messages
-    sendText: async ({ to, text, contextToken }) => {
-      await sendMessageWeixin({
-        to,
-        text,
-        opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
-      });
-    },
-  },
-
-  onStatusChange: (status) => {
-    console.log(`Connection status: ${status.connected ? "connected" : "disconnected"}`);
-  },
+  syncBuf,
+  onSyncBufUpdate: (buf) => { syncBuf.value = buf; /* persist */ },
+  onStatusChange: (s) => console.log("Status:", s),
+  abortSignal: controller.signal,
 });
 
-// Later: poller.stop() to stop polling
+try {
+  for await (const msg of poller.messages()) {
+    console.log(`${msg.fromUserId}: ${msg.content}`);
+
+    // Save contextToken for replying
+    // const token = msg.contextToken;
+  }
+} catch (err) {
+  // Network/API errors thrown here
+  console.error("Poller error:", err);
+}
+
+// Stop polling
+controller.abort();
 ```
 
-### 3. Send Messages Directly
+### 3. Send Messages
 
 ```typescript
 import { sendMessageWeixin, sendImageMessageWeixin } from "botsdk-weixin";
 
-// Send a text message
+// contextToken is required from inbound message
 await sendMessageWeixin({
   to: "user-id",
-  text: "Hello from botsdk-weixin!",
+  text: "Hello!",
   opts: {
-    baseUrl: "https://ilinkai.weixin.qq.com",
-    token: "your-token",
-    contextToken: "context-token-from-inbound-message",
+    baseUrl: account.baseUrl,
+    token: account.token,
+    routeTag: account.routeTag,
+    contextToken: "context-token-from-inbound",
   },
 });
-
-// Send an image (after uploading to CDN)
-await sendImageMessageWeixin({
-  to: "user-id",
-  text: "Here's an image for you",
-  uploaded: {
-    filekey: "file-key-from-upload",
-    aeskey: Buffer.from("your-32-byte-key"),
-    fileSize: 12345,
-    fileSizeCiphertext: 12352,
-    downloadEncryptedQueryParam: "encrypted-param",
-  },
-  opts: {
-    baseUrl: "https://ilinkai.weixin.qq.com",
-    token: "your-token",
-    contextToken: "context-token",
-  },
-});
-```
-
-### 4. Process Inbound Messages Manually
-
-If you prefer more control over the message loop:
-
-```typescript
-import { getUpdates, markdownToPlainText } from "botsdk-weixin";
-
-async function messageLoop() {
-  let syncBuf = "";
-
-  while (true) {
-    const resp = await getUpdates({
-      baseUrl: account.baseUrl,
-      token: account.token,
-      get_updates_buf: syncBuf,
-      timeoutMs: 35000,
-    });
-
-    if (resp.get_updates_buf) {
-      syncBuf = resp.get_updates_buf;
-    }
-
-    for (const msg of resp.msgs ?? []) {
-      // Process each message
-      const text = msg.item_list?.[0]?.text_item?.text ?? "";
-      console.log(`Message from ${msg.from_user_id}: ${text}`);
-    }
-  }
-}
 ```
 
 ## API Reference
@@ -186,26 +116,32 @@ async function messageLoop() {
 | Export | Description |
 |--------|-------------|
 | `loginWithQr` / `waitForLogin` | QR code login flow |
-| `createPoller` | Start a long-poll message loop with callbacks |
+| `createPoller` | Start polling via async iterable |
 | `sendMessageWeixin` | Send a text message |
 | `sendImageMessageWeixin` | Send an image |
 | `sendVideoMessageWeixin` | Send a video |
 | `sendFileMessageWeixin` | Send a file |
-| `getUpdates` | Long-poll for new messages |
-| `resolveWeixinAccount` | Resolve account config from config file |
-| `loadWeixinAccount` / `saveWeixinAccount` | Manage stored credentials |
+| `getUpdates` | Low-level long-poll API |
 | `markdownToPlainText` | Convert markdown to plain text |
-| `normalizeAccountId` | Normalize account IDs for filesystem safety |
 
 ### Types
 
 | Type | Description |
 |------|-------------|
+| `WeixinAccount` | Account credentials object |
+| `SyncBuf` | Sync buffer state container |
+| `InboundMessage` | Union of TextMessage or MediaMessage |
 | `TextMessage` | Inbound text message |
 | `MediaMessage` | Inbound media message |
-| `ResolvedWeixinAccount` | Resolved account with credentials |
-| `WeixinMessageCallbacks` | Callbacks for message handling |
-| `InboundMessage` | Unified inbound message |
+
+## Examples
+
+See the [examples](./examples/) directory for complete examples:
+
+- `examples/1-login.ts` — QR code login
+- `examples/2-poller.ts` — Async iterable polling
+- `examples/3-send.ts` — Send messages
+- `examples/4-context-tokens.ts` — Context token management
 
 ## License
 
@@ -213,4 +149,4 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE) for det
 
 ## Backend API Protocol
 
-For developers integrating with their own backend, this library communicates with the backend gateway via HTTP JSON API. The protocol documentation is preserved from the original project in the [docs](./docs) directory.
+For developers integrating with their own backend, this library communicates with the backend gateway via HTTP JSON API. The protocol documentation is preserved in the [docs](./docs) directory.

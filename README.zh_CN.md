@@ -12,13 +12,12 @@
 
 `botsdk-weixin` 是一个**纯净的微信 API 客户端库**，可以通过简单清晰的 API 与微信/Weixin 进行交互。它设计为框架无关——无需 OpenClaw 或其他框架依赖。
 
-### 使用这个库可以实现：
+### 功能
 
 - **扫码登录** — 通过扫描二维码完成微信认证
-- **长轮询消息** — 通过 getUpdates 轮询接收入站消息
+- **Async Iterable 轮询** — 通过 `for await...of` 接收消息
 - **发送消息** — 发送文本、图片、视频、文件和语音消息
 - **CDN 媒体上传/下载** — 处理带 AES-128-ECB 加密的媒体文件
-- **输入状态指示** — 向用户发送/取消输入状态
 
 ## 安装
 
@@ -31,152 +30,83 @@ npm install botsdk-weixin
 ### 1. 扫码登录
 
 ```typescript
-import { loginWithQr, waitForLogin, saveWeixinAccount } from "botsdk-weixin";
+import { loginWithQr, waitForLogin } from "botsdk-weixin";
 
-const account = await loginWithQr({
-  baseUrl: "https://ilinkai.weixin.qq.com",
-  onQRCode: (dataUrl) => {
-    // 向用户展示二维码
-    console.log("请扫描此二维码:", dataUrl);
-  },
+const login = await loginWithQr({
+  apiBaseUrl: "https://ilinkai.weixin.qq.com",
+  routeTag: undefined, // 可选
 });
 
-const result = await waitForLogin(account);
+console.log("扫描二维码:", login.qrcodeUrl);
 
-if (result.status === "confirmed") {
-  // 保存凭证以供后续使用
-  saveWeixinAccount(result.accountId, {
-    token: result.token,
+const result = await waitForLogin({
+  sessionKey: login.sessionKey,
+  apiBaseUrl: "https://ilinkai.weixin.qq.com",
+  routeTag: undefined,
+});
+
+if (result.connected) {
+  // 调用方管理凭证 - 保存到你自己的存储
+  const account = {
+    accountId: result.accountId,
+    token: result.botToken,
+    baseUrl: result.baseUrl,
+    cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
     userId: result.userId,
-  });
+  };
   console.log("登录成功！");
 }
 ```
 
-### 2. 创建消息轮询器
+### 2. 轮询消息（Async Iterable）
 
 ```typescript
-import { createPoller, type TextMessage, type MediaMessage } from "botsdk-weixin";
+import { createPoller } from "botsdk-weixin";
 
-const account = {
-  accountId: "my-bot",
-  baseUrl: "https://ilinkai.weixin.qq.com",
-  cdnBaseUrl: "https://novac2c.cdn.weixin.qq.com/c2c",
-  token: "your-token-here",
-  enabled: true,
-  configured: true,
-};
+// 调用方管理 syncBuf 和凭证
+const syncBuf = { value: "" };
+const controller = new AbortController();
 
 const poller = createPoller({
   account,
-
-  callbacks: {
-    onTextMessage: async (msg: TextMessage) => {
-      console.log(`收到来自 ${msg.fromUserId} 的消息: ${msg.content}`);
-
-      // 回复相同内容（回显示例）
-      // 生产环境中，这里应该接入你的 AI 后端
-      if (callbacks.sendText) {
-        await callbacks.sendText({
-          to: msg.fromUserId,
-          text: `回显: ${msg.content}`,
-          contextToken: msg.contextToken,
-        });
-      }
-    },
-
-    onMediaMessage: async (msg: MediaMessage) => {
-      console.log(`收到来自 ${msg.fromUserId} 的媒体消息:`);
-      console.log(`  类型: ${msg.mediaType}`);
-      console.log(`  路径: ${msg.mediaPath}`);
-    },
-
-    onError: (err, context) => {
-      console.error(`${context} 中发生错误:`, err);
-    },
-
-    // 实现 sendText 来回复消息
-    sendText: async ({ to, text, contextToken }) => {
-      await sendMessageWeixin({
-        to,
-        text,
-        opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
-      });
-    },
-  },
-
-  onStatusChange: (status) => {
-    console.log(`连接状态: ${status.connected ? "已连接" : "已断开"}`);
-  },
+  syncBuf,
+  onSyncBufUpdate: (buf) => { syncBuf.value = buf; /* 持久化 */ },
+  onStatusChange: (s) => console.log("状态:", s),
+  abortSignal: controller.signal,
 });
 
-// 需要停止时: poller.stop()
+try {
+  for await (const msg of poller.messages()) {
+    console.log(`${msg.fromUserId}: ${msg.content}`);
+
+    // 保存 contextToken 用于回复
+    // const token = msg.contextToken;
+  }
+} catch (err) {
+  // 网络/API 错误会抛出到这里
+  console.error("轮询错误:", err);
+}
+
+// 停止轮询
+controller.abort();
 ```
 
-### 3. 直接发送消息
+### 3. 发送消息
 
 ```typescript
 import { sendMessageWeixin, sendImageMessageWeixin } from "botsdk-weixin";
 
-// 发送文本消息
+// contextToken 必需，从接收到的消息中获取
 await sendMessageWeixin({
   to: "user-id",
-  text: "你好，来自 botsdk-weixin！",
+  text: "你好！",
   opts: {
-    baseUrl: "https://ilinkai.weixin.qq.com",
-    token: "your-token",
-    contextToken: "context-token-from-inbound-message",
+    baseUrl: account.baseUrl,
+    token: account.token,
+    routeTag: account.routeTag,
+    contextToken: "context-token-from-inbound",
   },
 });
-
-// 发送图片（需先上传到 CDN）
-await sendImageMessageWeixin({
-  to: "user-id",
-  text: "这是一张图片",
-  uploaded: {
-    filekey: "上传后得到的 file-key",
-    aeskey: Buffer.from("your-32-byte-key"),
-    fileSize: 12345,
-    fileSizeCiphertext: 12352,
-    downloadEncryptedQueryParam: "encrypted-param",
-  },
-  opts: {
-    baseUrl: "https://ilinkai.weixin.qq.com",
-    token: "your-token",
-    contextToken: "context-token",
-  },
-});
-```
-
-### 4. 手动处理入站消息
-
-如果需要更多控制权：
-
-```typescript
-import { getUpdates } from "botsdk-weixin";
-
-async function messageLoop() {
-  let syncBuf = "";
-
-  while (true) {
-    const resp = await getUpdates({
-      baseUrl: account.baseUrl,
-      token: account.token,
-      get_updates_buf: syncBuf,
-      timeoutMs: 35000,
-    });
-
-    if (resp.get_updates_buf) {
-      syncBuf = resp.get_updates_buf;
-    }
-
-    for (const msg of resp.msgs ?? []) {
-      // 处理每条消息
-      const text = msg.item_list?.[0]?.text_item?.text ?? "";
-      console.log(`收到来自 ${msg.from_user_id} 的消息: ${text}`);
-    }
-  }
-}
 ```
 
 ## API 参考
@@ -186,26 +116,32 @@ async function messageLoop() {
 | 导出 | 说明 |
 |------|------|
 | `loginWithQr` / `waitForLogin` | 扫码登录流程 |
-| `createPoller` | 启动带回调的长轮询消息循环 |
+| `createPoller` | 通过 async iterable 启动轮询 |
 | `sendMessageWeixin` | 发送文本消息 |
 | `sendImageMessageWeixin` | 发送图片 |
 | `sendVideoMessageWeixin` | 发送视频 |
 | `sendFileMessageWeixin` | 发送文件 |
-| `getUpdates` | 长轮询获取新消息 |
-| `resolveWeixinAccount` | 从配置文件解析账号配置 |
-| `loadWeixinAccount` / `saveWeixinAccount` | 管理存储的凭证 |
+| `getUpdates` | 低层级长轮询 API |
 | `markdownToPlainText` | 将 markdown 转换为纯文本 |
-| `normalizeAccountId` | 标准化账户 ID（文件系统安全） |
 
 ### 类型
 
 | 类型 | 说明 |
 |------|------|
+| `WeixinAccount` | 账户凭证对象 |
+| `SyncBuf` | 同步缓冲区状态容器 |
+| `InboundMessage` | TextMessage 或 MediaMessage 的联合类型 |
 | `TextMessage` | 入站文本消息 |
 | `MediaMessage` | 入站媒体消息 |
-| `ResolvedWeixinAccount` | 解析后的账号（含凭证） |
-| `WeixinMessageCallbacks` | 消息处理回调接口 |
-| `InboundMessage` | 统一的入站消息 |
+
+## 示例
+
+完整示例见 [examples](./examples/) 目录：
+
+- `examples/1-login.ts` — 扫码登录
+- `examples/2-poller.ts` — Async iterable 轮询
+- `examples/3-send.ts` — 发送消息
+- `examples/4-context-tokens.ts` — Context token 管理
 
 ## 许可证
 
