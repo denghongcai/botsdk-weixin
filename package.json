@@ -1,6 +1,6 @@
 {
   "name": "botsdk-weixin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pure WeChat API client library",
   "license": "MIT",
   "author": "denghongcai",
