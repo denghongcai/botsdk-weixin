@@ -8,7 +8,11 @@ import path from "node:path";
  * Same file and format used by all other channels.
  */
 
-const MAIN_LOG_DIR = path.join("/tmp", "openclaw");
+const MAIN_LOG_DIR =
+  process.env.TMPDIR?.trim() ||
+  process.env.TEMP?.trim() ||
+  process.env.TMP?.trim() ||
+  path.join("/tmp", "openclaw");
 const SUBSYSTEM = "gateway/channels/openclaw-weixin";
 const RUNTIME = "node";
 const RUNTIME_VERSION = process.versions.node;
