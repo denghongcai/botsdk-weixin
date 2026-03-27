@@ -1,6 +1,6 @@
 {
   "name": "botsdk-weixin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Pure WeChat API client library",
   "license": "MIT",
   "author": "denghongcai",
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "qrcode-terminal": "0.12.0",
+    "silk-wasm": "^3.7.1",
     "zod": "4.3.6"
   },
   "devDependencies": {
